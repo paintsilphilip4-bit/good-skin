@@ -17,6 +17,7 @@ export interface Doctor {
   price: number;
   image: string;
   available: boolean;
+  bio?: string;
 }
 
 export interface AnalysisResult {
@@ -41,6 +42,8 @@ export interface Patient {
   name: string;
   age: number;
   gender: string;
+  // Added image property to support profile or placeholder images in dashboard views
+  image?: string;
   lastScanUrl?: string;
   history?: {
     chiefComplaint: string;
@@ -49,6 +52,29 @@ export interface Patient {
     medications: string;
     allergies: string;
   };
+}
+
+// Added DashboardPatient to fix missing type errors in App.tsx
+export interface DashboardPatient extends Patient {
+  status: 'waiting' | 'processing' | 'scheduled';
+  requestTime: number;
+  scheduledTime?: number; // timestamp for the appointment
+  remindersSent?: {
+    twentyFourHour: boolean;
+    thirtyMinute: boolean;
+  };
+}
+
+export interface ConsultationHistoryRecord {
+  id: string;
+  patientId: string;
+  patientName: string;
+  date: string;
+  condition: string;
+  imageUrl: string;
+  notes: string;
+  analysis: AnalysisResult;
+  clinicalAnalysis?: MedicalAnalysis;
 }
 
 export interface ScanResult {

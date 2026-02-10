@@ -76,3 +76,33 @@ export const analyzeAsDermatologist = async (base64Image: string): Promise<Medic
     throw error;
   }
 };
+
+export const generateDailyInsight = async (): Promise<{ title: string; shortTip: string; detailedExplanation: string }> => {
+  const ai = getAI();
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: "Generate a sophisticated, professional skincare 'Daily Insight'. It should be medically grounded but accessible. Focus on topics like barrier repair, seasonal changes, or active ingredient combinations. Return JSON with keys 'title', 'shortTip', 'detailedExplanation'.",
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            shortTip: { type: Type.STRING },
+            detailedExplanation: { type: Type.STRING }
+          },
+          required: ["title", "shortTip", "detailedExplanation"]
+        }
+      }
+    });
+    return JSON.parse(response.text || '{}');
+  } catch (error) {
+    console.error("Failed to generate insight:", error);
+    return {
+      title: "Skin Barrier Basics",
+      shortTip: "Moisturize within 3 minutes of washing your face.",
+      detailedExplanation: "Transepidermal water loss is highest immediately after cleansing. Applying a ceramide-rich moisturizer to damp skin locks in hydration and protects the lipid barrier."
+    };
+  }
+};
