@@ -1,0 +1,7 @@
+{
+  "name": "Good Skin",
+  "description": "AI-powered dermatology assistant connecting patients with specialists.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
