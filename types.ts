@@ -8,9 +8,58 @@ export interface User {
   role: UserRole;
 }
 
-export interface Doctor {
-  id: number;
+export interface SpecialistProfile {
+  id: string;
   name: string;
+  licenseNumber: string;
+  photo: string;
+  totalEarnings: number;
+  stripeId: string;
+}
+
+export interface Appointment {
+  id: string;
+  patientId: string;
+  specialistId: string;
+  status: 'pending' | 'active' | 'completed' | 'in-consultation';
+  scheduledTime: number;
+  consultationFee: number;
+  aiAnalysisSummary?: string; 
+  aiConfidence?: number;
+}
+
+export interface PatientData {
+  id: string;
+  patientId: string; // Persistent UID
+  phoneNumber: string; // Primary Key for Folder System
+  folderId: string; // Display ID (e.g. GS-4421)
+  name: string;
+  age: number;
+  attachedImages: string[];
+  aiAnalysisJson: {
+    condition: string;
+    probability: number;
+    severity: 'Low' | 'Medium' | 'High';
+  };
+}
+
+export interface PrescriptionEntry {
+  drugName: string;
+  dosage: string;
+  duration: string;
+}
+
+export interface MedicalRecord {
+  clerkingNotes: string;
+  historyDuration: string;
+  historyTreatments: string;
+  historyAllergies: string;
+  labRequests: string[];
+  prescriptionText: PrescriptionEntry[];
+  labInvestigationRequest: string;
+}
+
+export interface Doctor extends SpecialistProfile {
   specialty: string;
   rating: number;
   reviews: number;
@@ -22,8 +71,8 @@ export interface Doctor {
 
 export interface AnalysisResult {
   condition: string;
-  severityScore: number; // 1-10
-  confidence: number; // 0-100
+  severityScore: number;
+  confidence: number;
   description: string;
   potentialCauses: string[];
   recommendedIngredients: string[];
@@ -32,17 +81,18 @@ export interface AnalysisResult {
 }
 
 export interface MedicalAnalysis {
-  physicalFindings: string;
-  pathophysiology: string;
-  treatmentPlan: string;
+  findings: string;
+  diagnosis: string;
+  confidence: string;
+  explanation: string;
+  treatment: string[];
+  physicalFindings?: string;
+  pathophysiology?: string;
+  treatmentPlan?: string;
 }
 
-export interface Patient {
-  id: string;
-  name: string;
-  age: number;
+export interface Patient extends PatientData {
   gender: string;
-  // Added image property to support profile or placeholder images in dashboard views
   image?: string;
   lastScanUrl?: string;
   history?: {
@@ -54,27 +104,23 @@ export interface Patient {
   };
 }
 
-// Added DashboardPatient to fix missing type errors in App.tsx
 export interface DashboardPatient extends Patient {
-  status: 'waiting' | 'processing' | 'scheduled';
+  status: 'waiting' | 'processing' | 'scheduled' | 'in-consultation' | 'assigned' | 'completed';
   requestTime: number;
-  scheduledTime?: number; // timestamp for the appointment
-  remindersSent?: {
-    twentyFourHour: boolean;
-    thirtyMinute: boolean;
-  };
+  scheduledTime?: number;
+  aiFindings?: string;
 }
 
-export interface ConsultationHistoryRecord {
+export interface ConsultationHistoryRecord extends MedicalRecord {
   id: string;
   patientId: string;
+  phoneNumber: string;
   patientName: string;
   date: string;
   condition: string;
   imageUrl: string;
-  notes: string;
   analysis: AnalysisResult;
-  clinicalAnalysis?: MedicalAnalysis;
+  fee: number;
 }
 
 export interface ScanResult {

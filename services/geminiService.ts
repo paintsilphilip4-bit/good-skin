@@ -1,108 +1,151 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { AnalysisResult, MedicalAnalysis } from "../types";
 
-const getAI = () => new GoogleGenAI({ apiKey: process.env.API_KEY });
+/**
+ * CLINICAL IMAGE UTILITIES
+ * Resizes images to optimize token usage and performs local triage (brightness check).
+ */
+export const compressAndValidateImage = async (base64Str: string): Promise<{ data: string, isValid: boolean, reason?: string }> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = base64Str;
+    img.onload = () => {
+      const MAX_DIM = 1024;
+      let width = img.width;
+      let height = img.height;
 
-export const analyzeSkinImage = async (base64Image: string): Promise<AnalysisResult> => {
-  const ai = getAI();
-  try {
-    const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: {
-        parts: [
-          { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
-          { text: "Perform a patient-facing skin analysis. Return JSON with condition, severityScore (1-10), confidence (0-100), description, potentialCauses, recommendedIngredients, urgency (Low/Medium/High), and tips." }
-        ]
-      },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            condition: { type: Type.STRING },
-            severityScore: { type: Type.NUMBER },
-            confidence: { type: Type.NUMBER },
-            description: { type: Type.STRING },
-            potentialCauses: { type: Type.ARRAY, items: { type: Type.STRING } },
-            recommendedIngredients: { type: Type.ARRAY, items: { type: Type.STRING } },
-            urgency: { type: Type.STRING },
-            tips: { type: Type.ARRAY, items: { type: Type.STRING } }
-          },
-          required: ["condition", "severityScore", "confidence", "description", "potentialCauses", "recommendedIngredients", "urgency", "tips"]
+      if (width > height) {
+        if (width > MAX_DIM) {
+          height *= MAX_DIM / width;
+          width = MAX_DIM;
+        }
+      } else {
+        if (height > MAX_DIM) {
+          width *= MAX_DIM / height;
+          height = MAX_DIM;
         }
       }
-    });
-    return JSON.parse(response.text || '{}') as AnalysisResult;
-  } catch (error) {
-    console.error(error);
-    return { condition: "Error", severityScore: 0, confidence: 0, description: "Failed", potentialCauses: [], recommendedIngredients: [], urgency: "Low", tips: [] };
-  }
-};
 
-export const analyzeAsDermatologist = async (base64Image: string): Promise<MedicalAnalysis> => {
-  const ai = getAI();
-  try {
-    const cleanBase64 = base64Image.replace(/^data:image\/(png|jpeg|jpg|webp);base64,/, '');
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: {
-        parts: [
-          { inlineData: { mimeType: 'image/jpeg', data: cleanBase64 } },
-          { 
-            text: `From a dermatologist view point, describe your physical examination findings for the skin disease in the image above like a medical student, then what's happening (pathophysiology), and what's will be your treatment plan. 
-            
-            Format as JSON with keys: "physicalFindings", "pathophysiology", "treatmentPlan".` 
-          }
-        ]
-      },
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            physicalFindings: { type: Type.STRING },
-            pathophysiology: { type: Type.STRING },
-            treatmentPlan: { type: Type.STRING }
-          },
-          required: ["physicalFindings", "pathophysiology", "treatmentPlan"]
-        }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return resolve({ data: base64Str, isValid: true });
+
+      ctx.drawImage(img, 0, 0, width, height);
+
+      // --- LOCAL TRIAGE: BRIGHTNESS CHECK ---
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const data = imageData.data;
+      let r, g, b, avg;
+      let totalBrightness = 0;
+      for (let i = 0; i < data.length; i += 4) {
+        r = data[i];
+        g = data[i + 1];
+        b = data[i + 2];
+        avg = (r + g + b) / 3;
+        totalBrightness += avg;
       }
-    });
-    return JSON.parse(response.text || '{}') as MedicalAnalysis;
-  } catch (error) {
-    console.error(error);
-    throw error;
-  }
+      const brightness = totalBrightness / (data.length / 4);
+
+      if (brightness < 45) {
+        return resolve({ data: '', isValid: false, reason: 'Please ensure your skin is in bright, natural light for the best AI analysis.' });
+      }
+
+      const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
+      resolve({ data: compressedBase64, isValid: true });
+    };
+    img.onerror = () => resolve({ data: base64Str, isValid: true });
+  });
 };
 
-export const generateDailyInsight = async (): Promise<{ title: string; shortTip: string; detailedExplanation: string }> => {
-  const ai = getAI();
+const CLINICAL_SYSTEM_PROMPT = `
+Role: Board-Certified Dermatologist.
+Task: Analyze this skin image strictly.
+Output: valid JSON only. No markdown.
+
+Protocol:
+1. Examine the image for primary and secondary lesions.
+2. Describe morphology, color, and distribution.
+3. Formulate a differential and select the most likely diagnosis.
+4. Provide a first-line treatment plan.
+
+If the image is not a skin condition, set diagnosis to "Non-Medical Image".
+`;
+
+export const analyzeSkinImage = async (base64Image: string): Promise<any> => {
   try {
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
+
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: "Generate a sophisticated, professional skincare 'Daily Insight'. It should be medically grounded but accessible. Focus on topics like barrier repair, seasonal changes, or active ingredient combinations. Return JSON with keys 'title', 'shortTip', 'detailedExplanation'.",
-      config: {
+      contents: {
+        parts: [
+          { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+          { text: "Analyze the provided dermatological image following the clinical protocol." }
+        ],
+      },
+      config: { 
+        systemInstruction: CLINICAL_SYSTEM_PROMPT,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            title: { type: Type.STRING },
-            shortTip: { type: Type.STRING },
-            detailedExplanation: { type: Type.STRING }
+            findings: { type: Type.STRING },
+            diagnosis: { type: Type.STRING },
+            confidence: { type: Type.STRING },
+            explanation: { type: Type.STRING },
+            treatment: { type: Type.ARRAY, items: { type: Type.STRING } },
           },
-          required: ["title", "shortTip", "detailedExplanation"]
-        }
+          required: ["findings", "diagnosis", "confidence", "explanation", "treatment"],
+        },
+        temperature: 0.0,
       }
     });
-    return JSON.parse(response.text || '{}');
-  } catch (error) {
-    console.error("Failed to generate insight:", error);
+
+    const text = response.text;
+    if (!text) throw new Error("EMPTY_RESPONSE");
+    
+    const result = JSON.parse(text.trim());
     return {
-      title: "Skin Barrier Basics",
-      shortTip: "Moisturize within 3 minutes of washing your face.",
-      detailedExplanation: "Transepidermal water loss is highest immediately after cleansing. Applying a ceramide-rich moisturizer to damp skin locks in hydration and protects the lipid barrier."
+      ...result,
+      severityScore: result.confidence === 'High' ? 8 : result.confidence === 'Medium' ? 5 : 2,
+      description: result.findings,
+      potentialCauses: [result.explanation],
+      recommendedIngredients: result.treatment,
+      urgency: result.confidence === 'High' ? 'High' : (result.confidence === 'Medium' ? 'Medium' : 'Low')
+    };
+  } catch (error: any) {
+    console.error("AI Analysis Bridge Failure:", error);
+    
+    // Comprehensive Quota Exceeded (429 / RESOURCE_EXHAUSTED) Detection
+    const errorMessage = error?.message || "";
+    const errorStatus = error?.status;
+    const errorCode = error?.code || (error?.response?.status);
+    
+    const isQuotaError = 
+      errorMessage.includes('429') || 
+      errorMessage.includes('RESOURCE_EXHAUSTED') || 
+      errorMessage.includes('quota') ||
+      errorStatus === 429 || 
+      errorCode === 429;
+
+    if (isQuotaError) {
+      throw new Error('QUOTA_EXCEEDED');
+    }
+
+    return {
+      findings: "Analysis bridge unavailable.",
+      diagnosis: "Service Offline",
+      confidence: "0",
+      explanation: "A technical error occurred.",
+      treatment: ["Retry the analysis later."],
+      isError: true,
+      urgency: 'Low',
+      severityScore: 0
     };
   }
 };
+
+export const analyzeAsDermatologist = analyzeSkinImage;

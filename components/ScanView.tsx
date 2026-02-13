@@ -1,8 +1,12 @@
 
 import React, { useState, useRef, useEffect } from 'react';
-/* Added Eye and Sparkles icons, removed Droplets from lucide-react import to fix local declaration conflict */
-import { Camera, Upload, X, AlertCircle, CheckCircle2, Loader2, RefreshCw, Star, ArrowRight, FolderCheck, ChevronLeft, ShieldCheck, Zap, Info, Eye, Sparkles } from 'lucide-react';
-import { analyzeSkinImage } from '../services/geminiService';
+import { 
+  Camera, Upload, X, AlertCircle, CheckCircle2, Loader2, 
+  RefreshCw, Star, ArrowRight, FolderCheck, ChevronLeft, 
+  ShieldCheck, Zap, Info, Eye, Sparkles, Droplets, Stethoscope,
+  Timer
+} from 'lucide-react';
+import { analyzeSkinImage, compressAndValidateImage } from '../services/geminiService';
 import { AnalysisResult, ScanResult, Doctor } from '../types';
 import { MOCK_DOCTORS } from '../constants';
 
@@ -18,6 +22,8 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [isDoctorBusy, setIsDoctorBusy] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [triageError, setTriageError] = useState<string | null>(null);
+  const [quotaCountdown, setQuotaCountdown] = useState<number>(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -26,6 +32,16 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
     }
   }, [result]);
 
+  // Quota Countdown Timer
+  useEffect(() => {
+    if (quotaCountdown > 0) {
+      const timer = setInterval(() => {
+        setQuotaCountdown((prev) => prev - 1);
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [quotaCountdown]);
+
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
@@ -33,6 +49,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
       reader.onloadend = () => {
         setImage(reader.result as string);
         setResult(null); 
+        setTriageError(null);
         setIsSyncing(false);
       };
       reader.readAsDataURL(file);
@@ -42,8 +59,20 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
   const handleAnalyze = async () => {
     if (!image) return;
     setAnalyzing(true);
+    setTriageError(null);
+
     try {
-      const analysis = await analyzeSkinImage(image);
+      // 1. Performance Optimization & Local Triage
+      const processed = await compressAndValidateImage(image);
+      
+      if (!processed.isValid) {
+        setTriageError(processed.reason || "Local triage failed.");
+        setAnalyzing(false);
+        return;
+      }
+
+      // 2. AI Analysis Call
+      const analysis = await analyzeSkinImage(processed.data);
       setResult(analysis);
       onScanComplete({
         id: Date.now().toString(),
@@ -51,24 +80,21 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
         imageUrl: image,
         analysis: analysis
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
+      if (error.message === 'QUOTA_EXCEEDED') {
+        setQuotaCountdown(60);
+      } else {
+        setTriageError("An unexpected error occurred during analysis.");
+      }
     } finally {
       setAnalyzing(false);
     }
   };
 
-  const resetScan = () => {
-    setImage(null);
-    setResult(null);
-    setIsSyncing(false);
-  };
-
   const triggerConsult = (doctor: Doctor) => {
     if (!image || !result) return;
     setIsSyncing(true);
-    
-    // Slight delay to simulate data preparation
     setTimeout(() => {
         const scanResult: ScanResult = {
             id: Date.now().toString(),
@@ -80,81 +106,90 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
     }, 1500);
   };
 
+  if (quotaCountdown > 0) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center p-8 bg-white animate-in fade-in duration-500 text-center">
+        <div className="w-24 h-24 bg-slate-50 border border-slate-100 squircle flex items-center justify-center mb-10 text-charcoal shadow-xl">
+           <Timer className="w-10 h-10 text-vitality animate-pulse" />
+        </div>
+        <h2 className="text-4xl font-black text-charcoal mb-4 tracking-tighter uppercase italic">Studio Calibrating</h2>
+        <p className="text-slate-400 text-sm font-bold uppercase tracking-[0.2em] max-w-xs mx-auto leading-relaxed">
+          GoodSkin AI is currently calibrating. Please try your scan again in {quotaCountdown} seconds.
+        </p>
+        <div className="mt-12 text-[10px] font-black text-slate-200 uppercase tracking-[1em]">Calibrating Neural Hub...</div>
+      </div>
+    );
+  }
+
   if (result) {
     const primaryDoctor = MOCK_DOCTORS[0]; 
     const urgencyColors = {
-        Low: 'bg-emerald-100 text-emerald-700',
-        Medium: 'bg-amber-100 text-amber-700',
-        High: 'bg-rose-100 text-rose-700'
+        Low: 'bg-emerald-50 text-emerald-600',
+        Medium: 'bg-amber-50 text-amber-600',
+        High: 'bg-rose-50 text-rose-600'
     };
 
     return (
-      <div className="flex flex-col h-full bg-slate-50 animate-in slide-in-from-bottom-10 duration-500 overflow-y-auto no-scrollbar relative">
-        <div className="absolute top-4 left-4 z-50">
-          <button onClick={onBack} className="p-2 bg-black/30 backdrop-blur-md rounded-full text-white hover:bg-black/50 transition">
+      <div className="flex flex-col h-full bg-warmgrey animate-in slide-in-from-bottom-10 duration-500 overflow-y-auto no-scrollbar relative pt-24">
+        <div className="absolute top-28 left-6 z-50">
+          <button onClick={onBack} className="p-3 bg-white/70 backdrop-blur-md rounded-full text-charcoal shadow-sm hover:scale-[1.1] transition-all">
             <ChevronLeft className="w-6 h-6" />
           </button>
         </div>
 
-        <div className="relative h-72 w-full bg-slate-900 flex-shrink-0">
-          <img src={image || ''} alt="Analyzed" className="w-full h-full object-cover opacity-80" />
-          <div className="absolute inset-0 bg-gradient-to-t from-slate-900 via-slate-900/20 to-transparent"></div>
-          <button 
-            onClick={resetScan}
-            className="absolute top-4 right-4 p-2 bg-white/20 backdrop-blur-md rounded-full text-white hover:bg-white/30 transition"
-          >
-            <RefreshCw className="w-5 h-5" />
-          </button>
+        <div className="relative h-[400px] w-full bg-charcoal flex-shrink-0">
+          <img src={image || ''} alt="Analyzed" className="w-full h-full object-cover opacity-60 grayscale-[50%]" />
+          <div className="absolute inset-0 bg-gradient-to-t from-charcoal via-charcoal/20 to-transparent"></div>
           
-          <div className="absolute bottom-6 left-6 right-6">
-            <div className="flex items-center justify-between mb-2">
-                <div className="px-3 py-1 bg-teal-500 text-white text-[10px] font-black rounded-full uppercase tracking-widest border border-white/20">
+          <div className="absolute bottom-10 left-10 right-10">
+            <div className="flex items-center justify-between mb-4">
+                <div className="px-5 py-1.5 bg-vitality text-white text-[10px] font-bold rounded-full uppercase tracking-[0.3em] border border-white/10 shadow-[0_0_20px_#10B981]">
                 {result.condition}
                 </div>
-                <div className={`px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-white/10 ${urgencyColors[result.urgency || 'Low']}`}>
+                <div className={`px-5 py-1.5 rounded-full text-[10px] font-bold uppercase tracking-[0.3em] border border-white/5 ${urgencyColors[result.urgency || 'Low']}`}>
                 Urgency: {result.urgency}
                 </div>
             </div>
-            <h2 className="text-4xl font-black text-white mb-2 tracking-tighter">
-              Score: <span className="text-teal-400">{result.severityScore}/10</span>
+            <h2 className="text-5xl font-bold text-white mb-4 tracking-tighter">
+              Score: <span className="text-vitality">{result.severityScore}/10</span>
             </h2>
-            <div className="flex items-center gap-2">
-                <div className="flex-1 h-1 bg-white/20 rounded-full overflow-hidden">
-                    <div className="h-full bg-teal-400" style={{ width: `${result.confidence}%` }}></div>
+            <div className="flex items-center gap-4">
+                <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+                    <div className="h-full bg-vitality shadow-[0_0_15px_#10B981]" style={{ width: `${result.confidence}%` }}></div>
                 </div>
-                <span className="text-[10px] text-teal-300 font-bold uppercase whitespace-nowrap">{result.confidence}% Confidence</span>
+                <span className="text-[10px] text-vitality font-bold uppercase whitespace-nowrap tracking-widest">{result.confidence}% Confidence</span>
             </div>
           </div>
         </div>
 
-        <div className="flex-1 p-6 space-y-6">
-          <div className="bg-white border border-slate-200 rounded-3xl p-6 shadow-sm">
-            <h3 className="text-slate-900 font-black flex items-center gap-2 mb-3 uppercase text-xs tracking-widest">
-              <ShieldCheck className="w-4 h-4 text-teal-500" /> Professional Insight
+        <div className="flex-1 p-10 space-y-10">
+          <div className="glass-card rounded-[2.5rem] p-10 shadow-xl">
+            <h3 className="text-charcoal font-bold flex items-center gap-3 mb-6 uppercase text-[10px] tracking-[0.4em]">
+              <ShieldCheck className="w-4 h-4 text-vitality" /> AI Clinical Assessment
             </h3>
-            <p className="text-slate-600 text-sm leading-relaxed mb-6 italic font-medium">"{result.description}"</p>
+            <p className="text-slate-600 text-base leading-relaxed mb-10 italic font-medium uppercase">"{result.description}"</p>
             
-            <div className="grid grid-cols-1 gap-4">
-                <div className="bg-slate-50 p-4 rounded-2xl border border-slate-100">
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2 flex items-center gap-1">
-                        <Zap className="w-3 h-3 text-amber-500" /> Potential Causes
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="bg-slate-50 p-6 rounded-3xl border border-slate-100">
+                    <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <Zap className="w-3.5 h-3.5 text-amber-500" /> Possible Triggers
                     </h4>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-3">
                         {result.potentialCauses?.map((cause, i) => (
-                            <span key={i} className="text-xs font-bold text-slate-700 bg-white border border-slate-200 px-2.5 py-1 rounded-lg">
+                            <span key={i} className="text-[10px] font-bold text-charcoal bg-white border border-slate-200 px-3 py-1.5 rounded-xl uppercase tracking-tight">
                                 {cause}
                             </span>
                         ))}
                     </div>
                 </div>
                 
-                <div className="bg-teal-50/30 p-4 rounded-2xl border border-teal-100">
-                    <h4 className="text-[10px] font-black text-teal-600 uppercase tracking-widest mb-2 flex items-center gap-1">
-                        <Droplets className="w-3 h-3" /> Recommended Actives
+                <div className="bg-vitality/5 p-6 rounded-3xl border border-vitality/10">
+                    <h4 className="text-[10px] font-bold text-vitality uppercase tracking-widest mb-4 flex items-center gap-2">
+                        <Droplets className="w-3.5 h-3.5" /> Recommended Ingredients
                     </h4>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-3">
                         {result.recommendedIngredients?.map((ing, i) => (
-                            <span key={i} className="text-xs font-black text-teal-800 bg-white border border-teal-200 px-2.5 py-1 rounded-lg shadow-sm">
+                            <span key={i} className="text-[10px] font-bold text-emerald-800 bg-white border border-vitality/20 px-3 py-1.5 rounded-xl uppercase tracking-tight shadow-sm">
                                 {ing}
                             </span>
                         ))}
@@ -163,29 +198,29 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
             </div>
           </div>
 
-          <div className={`bg-white rounded-[2.5rem] border-2 p-7 shadow-2xl shadow-teal-900/5 relative overflow-hidden group transition-all duration-500 ${isSyncing ? 'border-teal-500 bg-teal-50/50' : 'border-teal-100'}`}>
-            <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
-               <Stethoscope className="w-20 h-20 text-teal-900" />
+          <div className="glass-card rounded-[3rem] border-2 border-vitality/10 p-10 shadow-2xl relative overflow-hidden group hover:scale-[1.01] transition-all duration-500">
+            <div className="absolute top-0 right-0 p-10 opacity-5 group-hover:opacity-10 transition-opacity">
+               <Stethoscope className="w-32 h-32 text-charcoal" />
             </div>
 
-            <div className="flex justify-between items-start mb-6 relative z-10">
-              <h3 className="font-black text-teal-900 uppercase tracking-widest text-[10px]">
-                {isSyncing ? 'Synchronizing Clinical File' : 'Human Specialist Review'}
+            <div className="flex justify-between items-start mb-8 relative z-10">
+              <h3 className="font-bold text-slate-400 uppercase tracking-widest text-[10px]">
+                {isSyncing ? 'Linking Registry' : 'Human Specialist Uplink'}
               </h3>
-              <div className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black ${isDoctorBusy ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                <div className={`w-1.5 h-1.5 rounded-full ${isDoctorBusy ? 'bg-amber-500' : 'bg-emerald-500 animate-pulse'}`} />
-                {isDoctorBusy ? 'HIGH LOAD' : 'READY'}
+              <div className={`flex items-center gap-2 px-4 py-1.5 rounded-full text-[9px] font-bold tracking-widest ${isDoctorBusy ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
+                <div className={`w-2 h-2 rounded-full ${isDoctorBusy ? 'bg-amber-500' : 'bg-vitality animate-pulse shadow-[0_0_8px_#10B981]'}`} />
+                {isDoctorBusy ? 'PEAK LOAD' : 'LIVE'}
               </div>
             </div>
 
-            <div className="flex gap-4 items-center mb-8 relative z-10">
-              <img src={primaryDoctor.image} alt={primaryDoctor.name} className="w-16 h-16 rounded-[1.5rem] object-cover ring-4 ring-white shadow-xl" />
+            <div className="flex gap-6 items-center mb-10 relative z-10">
+              <img src={primaryDoctor.image} alt={primaryDoctor.name} className="w-20 h-20 squircle object-cover ring-4 ring-white shadow-2xl" />
               <div>
-                <h4 className="font-black text-slate-900 text-xl leading-none mb-1">{primaryDoctor.name}</h4>
-                <p className="text-xs text-teal-600 font-black uppercase tracking-widest mb-2">{primaryDoctor.specialty}</p>
-                <div className="flex items-center gap-1">
-                   <Star className="w-3 h-3 text-yellow-500 fill-current" />
-                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-tight">{primaryDoctor.rating} • Top Rated</span>
+                <h4 className="font-bold text-charcoal text-2xl tracking-tight leading-none mb-1.5 uppercase italic">{primaryDoctor.name}</h4>
+                <p className="text-[10px] text-vitality font-bold uppercase tracking-[0.3em] mb-3">{primaryDoctor.specialty}</p>
+                <div className="flex items-center gap-2">
+                   <Star className="w-3.5 h-3.5 text-yellow-500 fill-current" />
+                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{primaryDoctor.rating} Verified Specialist</span>
                 </div>
               </div>
             </div>
@@ -193,28 +228,19 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
             <button 
                 onClick={() => triggerConsult(primaryDoctor)}
                 disabled={isSyncing}
-                className={`w-full py-5 rounded-[1.8rem] font-black text-xs uppercase tracking-widest transition flex items-center justify-center gap-2 shadow-xl transform active:scale-95 ${isSyncing ? 'bg-slate-900 text-teal-400' : 'bg-teal-600 text-white hover:bg-teal-700 shadow-teal-600/30'}`}
+                className={`w-full py-7 rounded-full font-bold text-xs uppercase tracking-[0.4em] transition-all flex items-center justify-center gap-4 shadow-xl hover:scale-[1.02] active:scale-[0.98] ${isSyncing ? 'bg-charcoal text-vitality' : 'bg-vitality text-white shadow-vitality/30'}`}
             >
                 {isSyncing ? (
                     <>
-                        <Loader2 className="w-4 h-4 animate-spin" />
-                        Preparing Secure Link...
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        Synchronizing...
                     </>
                 ) : (
                     <>
-                        Consult specialist <ArrowRight className="w-5 h-5" />
+                        Authorize Consultation <ArrowRight className="w-5 h-5" />
                     </>
                 )}
             </button>
-            
-            <div className="mt-5 flex items-center justify-center gap-2 opacity-30">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span className="text-[9px] font-black uppercase tracking-[0.2em]">Clinical HIPAA Compliant</span>
-            </div>
-          </div>
-          
-          <div className="pb-24 text-[9px] text-slate-300 text-center px-10 uppercase font-bold tracking-widest leading-relaxed">
-            AI analysis provides diagnostic guidance only. Consult a specialist for definitive medical planning.
           </div>
         </div>
       </div>
@@ -222,83 +248,78 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
   }
 
   return (
-    <div className="h-full flex flex-col p-6 pb-24 bg-slate-50">
-      <header className="mb-10 flex items-start gap-5">
-        <button onClick={onBack} className="mt-1 p-3 bg-white border border-slate-200 rounded-2xl text-slate-400 hover:text-teal-600 hover:border-teal-200 transition shadow-sm">
-          <ChevronLeft className="w-6 h-6" />
+    <div className="h-full flex flex-col p-8 pb-32 bg-warmgrey pt-32 animate-in fade-in duration-700">
+      <header className="mb-14 flex items-start gap-8">
+        <button onClick={onBack} className="p-4 bg-white border border-slate-100 squircle text-slate-400 hover:text-charcoal transition-all shadow-sm">
+          <ChevronLeft className="w-7 h-7" />
         </button>
         <div>
-          <h2 className="text-4xl font-black text-slate-900 mb-1 tracking-tighter">Precision Scan</h2>
-          <p className="text-slate-400 text-sm font-medium tracking-tight">AI-driven dermatological diagnostics.</p>
+          <h2 className="text-5xl font-bold text-charcoal mb-2 tracking-tighter uppercase italic">Precision Scan</h2>
+          <p className="text-slate-400 text-[11px] font-bold uppercase tracking-[0.4em]">AI-Driven Imaging Hub</p>
         </div>
       </header>
 
       <div className="flex-1 flex flex-col items-center justify-center">
         {image ? (
-          <div className="w-full relative rounded-[3rem] overflow-hidden shadow-[0_35px_60px_-15px_rgba(0,0,0,0.15)] mb-10 group animate-in zoom-in-95 duration-500 border-4 border-white">
-            <img src={image} alt="Preview" className="w-full h-[28rem] object-cover" />
+          <div className="w-full max-w-lg relative rounded-[3rem] overflow-hidden shadow-2xl mb-12 border-4 border-white animate-in zoom-in-95">
+            <img src={image} alt="Preview" className="w-full h-[32rem] object-cover" />
             {!analyzing && (
                 <button 
-                onClick={() => setImage(null)}
-                className="absolute top-6 right-6 p-3 bg-black/40 backdrop-blur-md text-white rounded-2xl hover:bg-black/60 transition shadow-lg"
+                onClick={() => { setImage(null); setTriageError(null); }}
+                className="absolute top-8 right-8 p-4 bg-charcoal/40 backdrop-blur-md text-white rounded-2xl hover:bg-charcoal/60 transition shadow-lg"
                 >
-                <X className="w-6 h-6" />
+                <X className="w-7 h-7" />
                 </button>
             )}
-            <div className="absolute inset-x-0 bottom-0 p-8 bg-gradient-to-t from-black/60 to-transparent">
-                <div className="flex items-center gap-2 text-white/80">
-                    <Eye className="w-4 h-4" />
-                    <span className="text-[10px] font-black uppercase tracking-widest">Macro Lens Mode</span>
+            <div className="absolute inset-x-0 bottom-0 p-10 bg-gradient-to-t from-charcoal/60 to-transparent">
+                <div className="flex items-center gap-3 text-white/90">
+                    <Eye className="w-5 h-5 text-vitality" />
+                    <span className="text-[11px] font-bold uppercase tracking-widest">Macro Diagnostic Active</span>
                 </div>
             </div>
           </div>
         ) : (
           <div 
             onClick={() => fileInputRef.current?.click()}
-            className="w-full h-[28rem] border-4 border-dashed border-slate-200 rounded-[3rem] flex flex-col items-center justify-center bg-white hover:bg-teal-50/30 hover:border-teal-400 transition-all duration-500 cursor-pointer mb-10 group relative"
+            className="w-full max-w-lg h-[32rem] border-4 border-dashed border-slate-100 rounded-[4rem] flex flex-col items-center justify-center bg-white hover:border-vitality/30 transition-all duration-700 cursor-pointer mb-12 group relative shadow-sm"
           >
-            <div className="w-24 h-24 bg-teal-50 rounded-full flex items-center justify-center mb-6 text-teal-600 group-hover:scale-110 group-hover:bg-teal-100 transition-all duration-500 shadow-xl shadow-teal-100/50">
-              <Camera className="w-12 h-12" />
+            <div className="w-32 h-32 bg-slate-50 squircle flex items-center justify-center mb-10 text-charcoal group-hover:scale-[1.1] transition-all duration-700 shadow-xl border border-slate-100 group-hover:bg-vitality/5 group-hover:text-vitality">
+              <Camera className="w-16 h-16" />
             </div>
-            <span className="font-black text-slate-400 uppercase tracking-[0.2em] text-xs group-hover:text-teal-600 transition-colors">Start Clinical Scan</span>
-            <p className="mt-2 text-[10px] text-slate-300 font-bold uppercase tracking-widest px-12 text-center">Place your skin in clear light for high-fidelity imaging</p>
+            <span className="font-bold text-slate-400 uppercase tracking-[0.5em] text-sm group-hover:text-charcoal transition-colors">Engage Scanner</span>
+            <p className="mt-4 text-[10px] text-slate-300 font-bold uppercase tracking-widest px-16 text-center leading-relaxed">Ensure Skin Is In Direct Light For Clinical Accuracy</p>
           </div>
         )}
 
-        <input 
-          type="file" 
-          ref={fileInputRef} 
-          accept="image/*" 
-          className="hidden" 
-          onChange={handleFileSelect} 
-        />
+        <input type="file" ref={fileInputRef} accept="image/*" className="hidden" onChange={handleFileSelect} />
+
+        {triageError && (
+          <div className="w-full max-w-lg p-6 bg-rose-50 border border-rose-100 rounded-3xl mb-8 flex items-center gap-4 animate-in slide-in-from-top-2">
+            <AlertCircle className="w-6 h-6 text-rose-500 shrink-0" />
+            <p className="text-[11px] font-bold text-rose-600 uppercase tracking-widest leading-relaxed">
+              {triageError}
+            </p>
+          </div>
+        )}
 
         {image && !analyzing && (
           <button 
             onClick={handleAnalyze}
-            className="w-full py-5 bg-slate-900 text-white rounded-[1.8rem] font-black uppercase tracking-[0.2em] text-xs shadow-2xl shadow-slate-900/30 hover:bg-teal-600 transition transform active:scale-[0.98] flex items-center justify-center gap-3"
+            className="w-full max-w-lg py-8 bg-charcoal text-white rounded-full font-bold uppercase tracking-[0.6em] text-[13px] shadow-2xl hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-4"
           >
-            <Sparkles className="w-5 h-5" /> Analyze with AI
+            <Sparkles className="w-6 h-6 text-vitality" /> Authorize Neural Assessment
           </button>
         )}
 
         {analyzing && (
-          <div className="w-full py-5 bg-teal-600 text-white rounded-[1.8rem] font-black uppercase tracking-[0.2em] text-xs flex items-center justify-center gap-4 shadow-2xl">
-            <Loader2 className="w-6 h-6 animate-spin" />
-            Neural Assessment...
+          <div className="w-full max-w-lg py-8 bg-vitality text-white rounded-full font-bold uppercase tracking-[0.6em] text-[13px] flex items-center justify-center gap-6 shadow-2xl">
+            <Loader2 className="w-7 h-7 animate-spin" />
+            Neural Mapping...
           </div>
         )}
       </div>
     </div>
   );
 };
-
-const Stethoscope = ({ className }: { className?: string }) => (
-  <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.8 2.3A.3.3 0 1 0 5 2a.3.3 0 1 0-.2.3Z"/><path d="M10 22v-2"/><path d="M7 15H4a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-2a2 2 0 0 0-2-2h-3"/><path d="M21 14V5a2 2 0 0 0-12 2H5a2 2 0 0 0-2 2v9"/><path d="M10 10l4 4"/><path d="M14 10l-4 4"/></svg>
-);
-
-const Droplets = ({ className }: { className?: string }) => (
-    <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m12 22 1-1h.01a2.36 2.36 0 0 0 1.99-2.02l.02-.03A2.36 2.36 0 0 0 13 17h-.01L12 18l-1-1h-.01a2.36 2.36 0 0 0-1.99 2.02l-.02.03A2.36 2.36 0 0 0 11 22h.01Z"/><path d="M12 13V2"/><path d="m12 13-4-4"/><path d="m12 13 4-4"/></svg>
-);
 
 export default ScanView;
