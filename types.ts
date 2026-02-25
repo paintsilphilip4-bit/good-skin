@@ -17,48 +17,6 @@ export interface SpecialistProfile {
   stripeId: string;
 }
 
-export interface Appointment {
-  id: string;
-  patientId: string;
-  specialistId: string;
-  status: 'pending' | 'active' | 'completed' | 'in-consultation';
-  scheduledTime: number;
-  consultationFee: number;
-  aiAnalysisSummary?: string; 
-  aiConfidence?: number;
-}
-
-export interface PatientData {
-  id: string;
-  patientId: string; // Persistent UID
-  phoneNumber: string; // Primary Key for Folder System
-  folderId: string; // Display ID (e.g. GS-4421)
-  name: string;
-  age: number;
-  attachedImages: string[];
-  aiAnalysisJson: {
-    condition: string;
-    probability: number;
-    severity: 'Low' | 'Medium' | 'High';
-  };
-}
-
-export interface PrescriptionEntry {
-  drugName: string;
-  dosage: string;
-  duration: string;
-}
-
-export interface MedicalRecord {
-  clerkingNotes: string;
-  historyDuration: string;
-  historyTreatments: string;
-  historyAllergies: string;
-  labRequests: string[];
-  prescriptionText: PrescriptionEntry[];
-  labInvestigationRequest: string;
-}
-
 export interface Doctor extends SpecialistProfile {
   specialty: string;
   rating: number;
@@ -69,58 +27,35 @@ export interface Doctor extends SpecialistProfile {
   bio?: string;
 }
 
+/**
+ * AI Analysis Result Interface
+ * Professional Dermatological Schema V5.1 (Dual Layer)
+ */
 export interface AnalysisResult {
-  condition: string;
-  severityScore: number;
-  confidence: number;
-  description: string;
-  potentialCauses: string[];
-  recommendedIngredients: string[];
+  // LAYER 1: Specialist Data
+  primary_diagnosis: string;
+  confidence_score: number;
+  morphology: string;
+  distribution: string;
+  clinical_markers: string; // ABCDE or 7-point checklist summary
+  fitzpatrick_type: string;
+  differential_diagnoses: string[];
   urgency: 'Low' | 'Medium' | 'High';
-  tips: string[];
-}
+  modality_recommendation: 'Physical Biopsy Required' | 'Video Consultation Suitable';
+  
+  // LAYER 2: Patient Summary
+  patient_explanation: string;
+  patient_causes: string;
+  patient_advice: string[];
 
-export interface MedicalAnalysis {
-  findings: string;
-  diagnosis: string;
-  confidence: string;
-  explanation: string;
-  treatment: string[];
-  physicalFindings?: string;
-  pathophysiology?: string;
-  treatmentPlan?: string;
-}
-
-export interface Patient extends PatientData {
-  gender: string;
-  image?: string;
-  lastScanUrl?: string;
-  history?: {
-    chiefComplaint: string;
-    hpc: string;
-    pmh: string;
-    medications: string;
-    allergies: string;
-  };
-}
-
-export interface DashboardPatient extends Patient {
-  status: 'waiting' | 'processing' | 'scheduled' | 'in-consultation' | 'assigned' | 'completed';
-  requestTime: number;
-  scheduledTime?: number;
-  aiFindings?: string;
-}
-
-export interface ConsultationHistoryRecord extends MedicalRecord {
-  id: string;
-  patientId: string;
-  phoneNumber: string;
-  patientName: string;
-  date: string;
+  // Backward compatibility fields
+  recommended_next_step: string;
   condition: string;
-  imageUrl: string;
-  analysis: AnalysisResult;
-  fee: number;
+  diagnosis: string;
+  findings: string;
+  pathophysiology: string;
+  confidence: string;
+  treatment_plan: string[];
 }
 
 export interface ScanResult {
@@ -152,4 +87,33 @@ export interface RoutineTip {
   description: string;
   image: string;
   tag: string;
+}
+
+// Adding missing types for cross-component compatibility
+export interface PrescriptionEntry {
+  drugName: string;
+  dosage: string;
+  frequency: string;
+}
+
+export interface ConsultationHistoryRecord {
+  id: string;
+  date: string;
+  imageUrl: string;
+  patientName: string;
+  condition: string;
+  fee: number;
+  notes?: string;
+}
+
+export interface DashboardPatient {
+  id: string;
+  name: string;
+  phone: string;
+}
+
+export interface MedicalAnalysis {
+  physicalFindings: string;
+  pathophysiology: string;
+  treatmentPlan: string;
 }

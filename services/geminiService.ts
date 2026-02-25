@@ -1,10 +1,8 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
 
-/**
- * CLINICAL IMAGE UTILITIES
- * Resizes images to optimize token usage and performs local triage (brightness check).
- */
+const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export const compressAndValidateImage = async (base64Str: string): Promise<{ data: string, isValid: boolean, reason?: string }> => {
   return new Promise((resolve) => {
     const img = new Image();
@@ -34,118 +32,173 @@ export const compressAndValidateImage = async (base64Str: string): Promise<{ dat
 
       ctx.drawImage(img, 0, 0, width, height);
 
-      // --- LOCAL TRIAGE: BRIGHTNESS CHECK ---
       const imageData = ctx.getImageData(0, 0, width, height);
       const data = imageData.data;
-      let r, g, b, avg;
       let totalBrightness = 0;
       for (let i = 0; i < data.length; i += 4) {
-        r = data[i];
-        g = data[i + 1];
-        b = data[i + 2];
-        avg = (r + g + b) / 3;
-        totalBrightness += avg;
+        totalBrightness += (data[i] + data[i + 1] + data[i + 2]) / 3;
       }
       const brightness = totalBrightness / (data.length / 4);
 
-      if (brightness < 45) {
-        return resolve({ data: '', isValid: false, reason: 'Please ensure your skin is in bright, natural light for the best AI analysis.' });
+      if (brightness < 35) {
+        return resolve({ data: '', isValid: false, reason: 'Low Quality Image - Please retake in natural light.' });
       }
 
-      const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
+      const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
       resolve({ data: compressedBase64, isValid: true });
     };
-    img.onerror = () => resolve({ data: base64Str, isValid: true });
+    img.onerror = () => resolve({ data: base64Str, isValid: false, reason: 'Corrupted image asset.' });
   });
 };
 
 const CLINICAL_SYSTEM_PROMPT = `
-Role: Board-Certified Dermatologist.
-Task: Analyze this skin image strictly.
-Output: valid JSON only. No markdown.
+Act as a Board-Certified Dermatologist with a talent for patient communication. Your task is to analyze a skin image and provide two distinct layers of information.
 
-Protocol:
-1. Examine the image for primary and secondary lesions.
-2. Describe morphology, color, and distribution.
-3. Formulate a differential and select the most likely diagnosis.
-4. Provide a first-line treatment plan.
+LAYER 1: SPECIALIST DATA (JSON)
+Target: Dr. Newman (The Specialist).
+Tone: Clinical, precise, and highly technical.
+Required Analysis:
+1. MORPHOLOGY: (e.g., Erythematous plaques with silvery scale).
+2. DISTRIBUTION: (e.g., Extensor surfaces of elbows/knees).
+3. CLINICAL MARKERS: Apply ABCDE (for lesions) or 7-Point Checklist (for rashes).
+4. FITZPATRICK TYPE: Assess skin type (IV-VI).
+5. PRIMARY DIAGNOSIS: The most likely clinical diagnosis.
+6. DIFFERENTIALS: List 2 other technical possibilities.
+7. URGENCY: Routine, Urgent, or Emergency.
+8. MODALITY: Physical Biopsy vs Video Consult.
 
-If the image is not a skin condition, set diagnosis to "Non-Medical Image".
+LAYER 2: PATIENT SUMMARY (LAYMAN)
+Target: The Patient.
+Tone: Empathetic, clear, and reassuring.
+Structure:
+1. WHAT IT IS: A simple explanation of the diagnosis (avoid jargon).
+2. WHAT CAUSES IT: Common triggers or biological reasons in plain English.
+3. NEXT STEPS: Immediate, non-prescription advice (e.g., 'Avoid scratching', 'Use moisturizer').
+
+CRITICAL CONSTRAINT: The primary_diagnosis in Layer 1 must be the same condition described in Layer 2.
+
+OUTPUT FORMAT: Return ONLY a JSON object containing the defined schema.
 `;
 
 export const analyzeSkinImage = async (base64Image: string): Promise<any> => {
-  try {
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-    const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
+  
+  const MAX_RETRIES = 3;
+  let attempt = 0;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: {
-        parts: [
-          { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
-          { text: "Analyze the provided dermatological image following the clinical protocol." }
-        ],
-      },
-      config: { 
-        systemInstruction: CLINICAL_SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            findings: { type: Type.STRING },
-            diagnosis: { type: Type.STRING },
-            confidence: { type: Type.STRING },
-            explanation: { type: Type.STRING },
-            treatment: { type: Type.ARRAY, items: { type: Type.STRING } },
-          },
-          required: ["findings", "diagnosis", "confidence", "explanation", "treatment"],
+  while (attempt < MAX_RETRIES) {
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-3-flash-preview', 
+        contents: {
+          parts: [
+            { inlineData: { mimeType: 'image/jpeg', data: base64Data } },
+            { text: "Generate dual-layer dermatological analysis (Specialist Technical + Patient Layman)." }
+          ],
         },
-        temperature: 0.0,
+        config: { 
+          systemInstruction: CLINICAL_SYSTEM_PROMPT,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              specialist_analysis: {
+                type: Type.OBJECT,
+                properties: {
+                  primary_diagnosis: { type: Type.STRING },
+                  confidence_score: { type: Type.NUMBER },
+                  morphology: { type: Type.STRING },
+                  distribution: { type: Type.STRING },
+                  clinical_markers: { type: Type.STRING },
+                  fitzpatrick_type: { type: Type.STRING },
+                  differential_diagnoses: { type: Type.ARRAY, items: { type: Type.STRING } },
+                  urgency: { type: Type.STRING },
+                  modality_recommendation: { type: Type.STRING },
+                },
+                required: ["primary_diagnosis", "confidence_score", "morphology", "distribution", "clinical_markers", "urgency", "modality_recommendation"],
+              },
+              patient_summary: {
+                type: Type.OBJECT,
+                properties: {
+                  explanation: { type: Type.STRING },
+                  causes: { type: Type.STRING },
+                  home_care_advice: { type: Type.ARRAY, items: { type: Type.STRING } }
+                },
+                required: ["explanation", "causes", "home_care_advice"]
+              }
+            },
+          },
+          temperature: 0.1,
+        }
+      });
+
+      if (!response.text) {
+        throw new Error("No response generated from diagnostic engine.");
       }
-    });
 
-    const text = response.text;
-    if (!text) throw new Error("EMPTY_RESPONSE");
-    
-    const result = JSON.parse(text.trim());
-    return {
-      ...result,
-      severityScore: result.confidence === 'High' ? 8 : result.confidence === 'Medium' ? 5 : 2,
-      description: result.findings,
-      potentialCauses: [result.explanation],
-      recommendedIngredients: result.treatment,
-      urgency: result.confidence === 'High' ? 'High' : (result.confidence === 'Medium' ? 'Medium' : 'Low')
-    };
-  } catch (error: any) {
-    console.error("AI Analysis Bridge Failure:", error);
-    
-    // Comprehensive Quota Exceeded (429 / RESOURCE_EXHAUSTED) Detection
-    const errorMessage = error?.message || "";
-    const errorStatus = error?.status;
-    const errorCode = error?.code || (error?.response?.status);
-    
-    const isQuotaError = 
-      errorMessage.includes('429') || 
-      errorMessage.includes('RESOURCE_EXHAUSTED') || 
-      errorMessage.includes('quota') ||
-      errorStatus === 429 || 
-      errorCode === 429;
+      const rootResult = JSON.parse(response.text.trim());
+      
+      // Check for guardrail failure (usually stuck in primary_diagnosis)
+      if (rootResult.specialist_analysis?.primary_diagnosis?.includes("Low Quality")) {
+          throw new Error(rootResult.specialist_analysis.primary_diagnosis);
+      }
+      
+      // Flatten for app consumption
+      const specialist = rootResult.specialist_analysis;
+      const patient = rootResult.patient_summary;
 
-    if (isQuotaError) {
-      throw new Error('QUOTA_EXCEEDED');
+      return {
+        // Layer 1
+        primary_diagnosis: specialist.primary_diagnosis,
+        confidence_score: specialist.confidence_score,
+        morphology: specialist.morphology,
+        distribution: specialist.distribution,
+        clinical_markers: specialist.clinical_markers,
+        fitzpatrick_type: specialist.fitzpatrick_type,
+        differential_diagnoses: specialist.differential_diagnoses,
+        urgency: specialist.urgency,
+        modality_recommendation: specialist.modality_recommendation,
+        
+        // Layer 2
+        patient_explanation: patient.explanation,
+        patient_causes: patient.causes,
+        patient_advice: patient.home_care_advice,
+
+        // Compat
+        recommended_next_step: patient.home_care_advice?.[0] || "Consult Specialist",
+        condition: specialist.primary_diagnosis,
+        diagnosis: specialist.primary_diagnosis,
+        findings: specialist.morphology,
+        pathophysiology: specialist.clinical_markers,
+        confidence: `${specialist.confidence_score}%`,
+        treatment_plan: patient.home_care_advice,
+      };
+    } catch (error: any) {
+      attempt++;
+      console.error(`Diagnostic Engine Attempt ${attempt} failed:`, error);
+      
+      // Check for 503 Service Unavailable or similar capacity errors
+      const isOverloaded = error.message?.includes('503') || 
+                           error.status === 503 || 
+                           error.code === 503 || 
+                           error.message?.includes('high demand') ||
+                           error.message?.includes('temporarily overloaded');
+      
+      if (isOverloaded && attempt < MAX_RETRIES) {
+        // Exponential backoff: 1s, 2s, 4s... plus slight jitter
+        const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
+        console.log(`System overloaded. Retrying in ${delay.toFixed(0)}ms...`);
+        await wait(delay);
+        continue;
+      }
+      
+      // If retries exhausted or not a capacity error, throw friendly message
+      if (attempt === MAX_RETRIES && isOverloaded) {
+          throw new Error("Diagnostic system is currently at maximum capacity. Please try again in 30 seconds.");
+      }
+      
+      throw new Error(error.message || "Triage engine interrupted. Please retake image.");
     }
-
-    return {
-      findings: "Analysis bridge unavailable.",
-      diagnosis: "Service Offline",
-      confidence: "0",
-      explanation: "A technical error occurred.",
-      treatment: ["Retry the analysis later."],
-      isError: true,
-      urgency: 'Low',
-      severityScore: 0
-    };
   }
 };
-
-export const analyzeAsDermatologist = analyzeSkinImage;
