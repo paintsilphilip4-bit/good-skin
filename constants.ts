@@ -28,7 +28,7 @@ export interface Practitioner {
 }
 
 // Global utility for generating video consult rooms
-export const generateConsultationRoom = (caseId: string) => `https://goodskin.daily.co/consultation-${caseId}`;
+export const generateConsultationRoom = (caseId: string) => `https://meet.jit.si/GoodSkin-Clinical-${caseId}`;
 
 export const PRACTITIONER_REGISTRY: Practitioner[] = [
   {
@@ -85,6 +85,21 @@ export const MOCK_DOCTORS: Doctor[] = [
     totalEarnings: 0,
     stripeId: "acct_araba_002",
     bio: "Specialist in Pediatric & Adolescent Dermatology"
+  },
+  {
+    id: 'DOC_ZHAO_003',
+    name: "Dr. Kevin Zhao",
+    specialty: "Clinical Dermatologist",
+    rating: 4.8,
+    reviews: 125,
+    price: 85,
+    image: "https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&q=80&w=400&h=400",
+    available: false,
+    licenseNumber: "MDC/REG/KH8821",
+    photo: "https://images.unsplash.com/photo-1537368910025-700350fe46c7?auto=format&fit=crop&q=80&w=400&h=400",
+    totalEarnings: 0,
+    stripeId: "acct_zhao_003",
+    bio: "General clinical dermatology with focus on early detection."
   }
 ];
 

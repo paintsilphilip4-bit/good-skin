@@ -81,7 +81,7 @@ OUTPUT FORMAT: Return ONLY a JSON object containing the defined schema.
 `;
 
 export const analyzeSkinImage = async (base64Image: string): Promise<any> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   const base64Data = base64Image.includes(',') ? base64Image.split(',')[1] : base64Image;
   
   const MAX_RETRIES = 3;
@@ -182,20 +182,21 @@ export const analyzeSkinImage = async (base64Image: string): Promise<any> => {
       const isOverloaded = error.message?.includes('503') || 
                            error.status === 503 || 
                            error.code === 503 || 
+                           error.error?.code === 503 ||
+                           error.error?.status === 'UNAVAILABLE' ||
                            error.message?.includes('high demand') ||
                            error.message?.includes('temporarily overloaded');
       
-      if (isOverloaded && attempt < MAX_RETRIES) {
-        // Exponential backoff: 1s, 2s, 4s... plus slight jitter
-        const delay = Math.pow(2, attempt) * 1000 + Math.random() * 500;
-        console.log(`System overloaded. Retrying in ${delay.toFixed(0)}ms...`);
-        await wait(delay);
-        continue;
-      }
-      
-      // If retries exhausted or not a capacity error, throw friendly message
-      if (attempt === MAX_RETRIES && isOverloaded) {
-          throw new Error("Diagnostic system is currently at maximum capacity. Please try again in 30 seconds.");
+      if (isOverloaded) {
+        if (attempt < MAX_RETRIES) {
+            // Exponential backoff: 2s, 4s, 8s... plus jitter
+            const delay = Math.pow(2, attempt) * 2000 + Math.random() * 1000;
+            console.log(`System overloaded (Attempt ${attempt}/${MAX_RETRIES}). Retrying in ${delay.toFixed(0)}ms...`);
+            await wait(delay);
+            continue;
+        } else {
+             throw new Error("Diagnostic system is currently at maximum capacity. Please try again in a few minutes.");
+        }
       }
       
       throw new Error(error.message || "Triage engine interrupted. Please retake image.");

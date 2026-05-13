@@ -8,6 +8,7 @@ import ScanView from './components/ScanView';
 import AdminConsole from './components/AdminConsole';
 import PatientDashboard from './components/PatientDashboard';
 import { Doctor, ScanResult } from './types';
+import { useFirestore } from './hooks/useFirestore';
 
 /**
  * UTILS
@@ -24,96 +25,6 @@ const getSpecialistSession = () => {
 };
 
 /**
- * FIRESTORE REST API CONFIGURATION
- */
-const PROJECT_ID = 'good-skin-2';
-const BASE_DB_URL = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents`;
-const PATIENTS_URL = `${BASE_DB_URL}/patients`;
-const VERIFIED_URL = `${BASE_DB_URL}/verified_specialists`;
-const CASES_URL = `${BASE_DB_URL}/active_cases`; 
-
-/**
- * CASE MANAGEMENT SERVICE (THE BROADCAST LOGIC)
- */
-async function createClinicalCase(doctor: Doctor, scan: ScanResult, patientPhone: string, patientName: string, patientAge: string) {
-  const payload = {
-    fields: {
-      patientName: { stringValue: patientName || "Guest Patient" },
-      patientAge: { stringValue: patientAge || "N/A" },
-      patientPhone: { stringValue: patientPhone || "N/A" },
-      imageURL: { stringValue: scan.imageUrl },
-      status: { stringValue: 'pending' },
-      aiAnalysis: { stringValue: JSON.stringify(scan.analysis) }, 
-      specialistID: { stringValue: "" }, 
-      targetSpecialistID: { stringValue: doctor.id },
-      createdAt: { timestampValue: new Date().toISOString() } 
-    }
-  };
-
-  const response = await fetch(CASES_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
-  });
-
-  if (!response.ok) throw new Error('BROADCAST_FAILURE');
-  const data = await response.json();
-  return data.name.split('/').pop(); 
-}
-
-/**
- * PATIENT PROFILE SERVICE
- */
-async function savePatientProfile(phone: string, name: string, age: string) {
-    const payload = {
-        fields: {
-            name: { stringValue: name },
-            age: { stringValue: age },
-            phone: { stringValue: phone },
-            registeredAt: { timestampValue: new Date().toISOString() }
-        }
-    };
-    
-    await fetch(`${PATIENTS_URL}/${phone}?updateMask.fieldPaths=name&updateMask.fieldPaths=age&updateMask.fieldPaths=phone`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-    });
-}
-
-/**
- * VERIFICATION SERVICE
- */
-async function verifySpecialist(email: string, mdc: string) {
-  const normalizedEmail = email.toLowerCase().trim();
-  const normalizedMDC = mdc.trim();
-  
-  if (normalizedEmail === 'philip@goodskin.com') {
-      return { name: "Philip (Founder)", email: normalizedEmail, mdc: "MASTER", avatar: APP_LOGO_URL, isAdmin: true, id: 'FOUNDER_001' };
-  }
-
-  if (normalizedEmail === NEWMAN_EMAIL && (normalizedMDC === 'NEWMAN' || normalizedMDC === NEWMAN_MDC)) {
-      const doc = MOCK_DOCTORS.find(d => d.id === 'DOC_NEWMAN_001');
-      return { name: doc?.name, email: normalizedEmail, mdc: normalizedMDC, avatar: doc?.image, isAdmin: false, id: doc?.id, doctorData: doc };
-  }
-
-  if (normalizedEmail === ARABA_EMAIL && (normalizedMDC === 'ARABA' || normalizedMDC === ARABA_MDC)) {
-      const doc = MOCK_DOCTORS.find(d => d.id === 'DOC_ARABA_002');
-      return { name: doc?.name, email: normalizedEmail, mdc: normalizedMDC, avatar: doc?.image, isAdmin: false, id: doc?.id, doctorData: doc };
-  }
-
-  try {
-    const docId = normalizedEmail.replace(/[^a-z0-9]/g, '_');
-    const response = await fetch(`${VERIFIED_URL}/${docId}`);
-    if (!response.ok) throw new Error('NOT_WHITELISTED');
-    const data = await response.json();
-    return { name: data.fields.name.stringValue, email, mdc, avatar: data.fields.avatar?.stringValue || MOCK_DOCTORS[0].image, isAdmin: false, id: ACTIVE_CLINIC_ID };
-  } catch (e: any) {
-    return { name: MOCK_DOCTORS[0].name, email, mdc, avatar: MOCK_DOCTORS[0].image, isAdmin: false, id: ACTIVE_CLINIC_ID };
-  }
-}
-
-/**
  * SUB-COMPONENTS
  */
 
@@ -121,19 +32,19 @@ const PatientLoginModal = ({ onLogin, onCancel }: { onLogin: (phone: string, nam
   const [phone, setPhone] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [error, setError] = useState('');
+  const { getDocument } = useFirestore('patients');
 
   const handleDiscovery = async () => {
     if (phone.length < 5) return;
     setIsSearching(true);
     setError('');
     try {
-      const response = await fetch(`${PATIENTS_URL}/${phone}`);
-      if (!response.ok) {
+      const data = await getDocument(phone);
+      if (!data) {
          setError('No clinical record found for this mobile ID.');
          return;
       }
-      const data = await response.json();
-      const name = data.fields?.name?.stringValue || "Valued Patient";
+      const name = data.name || "Valued Patient";
       onLogin(phone, name);
     } catch (e) {
       setError('Connection Error. Try again.');
@@ -178,6 +89,7 @@ const PatientIdentityModal = ({ onSave, onCancel, onSwitchToLogin }: { onSave: (
   const [age, setAge] = useState('');
   const [loading, setLoading] = useState(false);
   const [duplicateFound, setDuplicateFound] = useState(false);
+  const { getDocument } = useFirestore('patients');
 
   const handleSave = async () => {
     if (!name || !phone || !age) return;
@@ -185,16 +97,12 @@ const PatientIdentityModal = ({ onSave, onCancel, onSwitchToLogin }: { onSave: (
     setDuplicateFound(false);
 
     try {
-        // Step 1: Check if phone already exists
-        const checkResponse = await fetch(`${PATIENTS_URL}/${phone}`);
-        if (checkResponse.ok) {
-            // 200 OK means record exists
+        const existing = await getDocument(phone);
+        if (existing) {
             setDuplicateFound(true);
             setLoading(false);
             return;
         }
-
-        // Step 2: If not found (404), proceed to save
         await onSave(phone, name, age);
     } catch (e) {
         console.error("Identity Verification Error", e);
@@ -244,7 +152,7 @@ const PatientIdentityModal = ({ onSave, onCancel, onSwitchToLogin }: { onSave: (
   );
 };
 
-const SpecialistLoginModal = ({ onLogin, onClose }: { onLogin: (s: any) => void, onClose: () => void }) => {
+const SpecialistLoginModal = ({ onLogin, onClose, verifySpecialist }: { onLogin: (s: any) => void, onClose: () => void, verifySpecialist: (e: string, m: string) => Promise<any> }) => {
   const [email, setEmail] = useState('');
   const [mdc, setMdc] = useState('');
   const [loading, setLoading] = useState(false);
@@ -284,7 +192,7 @@ const AdminLoginModal = ({ onLogin, onClose }: { onLogin: (s: any) => void, onCl
   const [password, setPassword] = useState('');
 
   const handleLogin = async () => {
-    if (email === 'philip@goodskin.com') {
+    if (email === 'philip@goodskin.com' && password === 'NEWMAN') {
         const user = { name: "Philip (Founder)", email, isAdmin: true, avatar: APP_LOGO_URL, id: 'FOUNDER_001' };
         onLogin(user);
     }
@@ -383,6 +291,38 @@ const App = () => {
   const [logoClicks, setLogoClicks] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
 
+  const { addDocument: addPatient } = useFirestore('patients');
+  const { addDocument: addCase } = useFirestore('active_cases');
+  const { getDocument: getVerifiedSpecialist } = useFirestore('verified_specialists');
+
+  const verifySpecialist = async (email: string, mdc: string) => {
+    const normalizedEmail = email.toLowerCase().trim();
+    const normalizedMDC = mdc.trim();
+    
+    if (normalizedEmail === 'philip@goodskin.com') {
+        return { name: "Philip (Founder)", email: normalizedEmail, mdc: "MASTER", avatar: APP_LOGO_URL, isAdmin: true, id: 'FOUNDER_001' };
+    }
+
+    if (normalizedEmail === NEWMAN_EMAIL && (normalizedMDC === 'NEWMAN' || normalizedMDC === NEWMAN_MDC)) {
+        const doc = MOCK_DOCTORS.find(d => d.id === 'DOC_NEWMAN_001');
+        return { name: doc?.name, email: normalizedEmail, mdc: normalizedMDC, avatar: doc?.image, isAdmin: false, id: doc?.id, doctorData: doc };
+    }
+
+    if (normalizedEmail === ARABA_EMAIL && (normalizedMDC === 'ARABA' || normalizedMDC === ARABA_MDC)) {
+        const doc = MOCK_DOCTORS.find(d => d.id === 'DOC_ARABA_002');
+        return { name: doc?.name, email: normalizedEmail, mdc: normalizedMDC, avatar: doc?.image, isAdmin: false, id: doc?.id, doctorData: doc };
+    }
+
+    try {
+      const docId = normalizedEmail.replace(/[^a-z0-9]/g, '_');
+      const data = await getVerifiedSpecialist(docId);
+      if (!data) throw new Error('NOT_WHITELISTED');
+      return { name: data.name, email, mdc, avatar: data.avatar || MOCK_DOCTORS[0].image, isAdmin: false, id: ACTIVE_CLINIC_ID };
+    } catch (e: any) {
+      return { name: MOCK_DOCTORS[0].name, email, mdc, avatar: MOCK_DOCTORS[0].image, isAdmin: false, id: ACTIVE_CLINIC_ID };
+    }
+  }
+
   const pendingConsultation = useRef<{ doctor: Doctor, scan: ScanResult } | null>(null);
 
   useEffect(() => {
@@ -412,7 +352,19 @@ const App = () => {
         return;
     }
     try {
-      return await createClinicalCase(doctor, scan, patientPhone, patientName, patientAge);
+      const fields = {
+        patientName: patientName || "Guest Patient",
+        patientAge: patientAge || "N/A",
+        patientPhone: patientPhone || "N/A",
+        imageURL: scan.imageUrl,
+        status: 'pending',
+        aiAnalysis: JSON.stringify(scan.analysis),
+        specialistID: "",
+        targetSpecialistID: doctor.id,
+        createdAt: new Date()
+      };
+      const res = await addCase(null, fields);
+      return res.name.split('/').pop();
     } catch (e) {
       console.error("Specialist Bridge Failed:", e);
       throw e;
@@ -420,7 +372,7 @@ const App = () => {
   };
 
   const finalizeIdentity = async (phone: string, name: string, age: string) => {
-    await savePatientProfile(phone, name, age);
+    await addPatient(phone, { name, age, phone, registeredAt: new Date() });
     localStorage.setItem('permanentPatientID', phone);
     localStorage.setItem('permanentPatientName', name);
     setPatientPhone(phone);
@@ -429,7 +381,7 @@ const App = () => {
     setShowIdentityModal(false);
     if (pendingConsultation.current) {
         const { doctor, scan } = pendingConsultation.current;
-        const id = await createClinicalCase(doctor, scan, phone, name, age);
+        const id = await handleConsultRequest(doctor, scan);
         pendingConsultation.current = null;
         return id;
     }
@@ -492,7 +444,16 @@ const App = () => {
       )}
 
       {showSpecialistModal && (
-          <SpecialistLoginModal onLogin={(s) => { setSpecialist(s); setShowSpecialistModal(false); if (s.isAdmin) setView('admin-console'); else setView('specialist-hub'); }} onClose={() => setShowSpecialistModal(false)} />
+          <SpecialistLoginModal 
+            verifySpecialist={verifySpecialist}
+            onLogin={(s) => { 
+                setSpecialist(s); 
+                setShowSpecialistModal(false); 
+                if (s.isAdmin) setView('admin-console'); 
+                else setView('specialist-hub'); 
+            }} 
+            onClose={() => setShowSpecialistModal(false)} 
+          />
       )}
 
       <main className="pt-0">

@@ -6,7 +6,7 @@ import {
   Video, BadgeCheck, ChevronLeft,
   FileText, Activity, ClipboardList, Info, Eye, AlertTriangle, MapPin,
   Maximize2, Layers, Search, Star, MessageCircleHeart, BrainCircuit,
-  CheckCircle2, Clock, BellRing
+  CheckCircle2, Clock, BellRing, AlertCircle, RotateCcw, Calendar, Filter
 } from 'lucide-react';
 import { analyzeSkinImage, compressAndValidateImage } from '../services/geminiService';
 import { AnalysisResult, ScanResult, Doctor } from '../types';
@@ -30,16 +30,53 @@ const ANALYSIS_PHASES = [
 ];
 
 const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }) => {
-  const [image, setImage] = useState<string | null>(null);
+  const [image, setImage] = useState<string | null>(() => localStorage.getItem('gs_saved_scan_image'));
   const [analyzing, setAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [result, setResult] = useState<AnalysisResult | null>(() => {
+    const saved = localStorage.getItem('gs_saved_scan_result');
+    return saved ? JSON.parse(saved) : null;
+  });
   const [isSyncing, setIsSyncing] = useState(false);
-  const [activeCaseId, setActiveCaseId] = useState<string | null>(null);
+  const [activeCaseId, setActiveCaseId] = useState<string | null>(() => localStorage.getItem('gs_saved_case_id'));
   const [caseStatus, setCaseStatus] = useState<string | null>(null);
-  const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(null);
+  const [selectedDoctorId, setSelectedDoctorId] = useState<string | null>(() => localStorage.getItem('gs_saved_doctor_id'));
+  const [sortCriteria, setSortCriteria] = useState<'rating' | 'price' | 'availability'>('rating');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-save sync
+  useEffect(() => {
+    if (image) localStorage.setItem('gs_saved_scan_image', image);
+    else localStorage.removeItem('gs_saved_scan_image');
+  }, [image]);
+
+  useEffect(() => {
+    if (result) localStorage.setItem('gs_saved_scan_result', JSON.stringify(result));
+    else localStorage.removeItem('gs_saved_scan_result');
+  }, [result]);
+
+  useEffect(() => {
+    if (activeCaseId) localStorage.setItem('gs_saved_case_id', activeCaseId);
+    else localStorage.removeItem('gs_saved_case_id');
+  }, [activeCaseId]);
+
+  useEffect(() => {
+    if (selectedDoctorId) localStorage.setItem('gs_saved_doctor_id', selectedDoctorId);
+    else localStorage.removeItem('gs_saved_doctor_id');
+  }, [selectedDoctorId]);
+
+  const clearSavedProgress = () => {
+    localStorage.removeItem('gs_saved_scan_image');
+    localStorage.removeItem('gs_saved_scan_result');
+    localStorage.removeItem('gs_saved_case_id');
+    localStorage.removeItem('gs_saved_doctor_id');
+    localStorage.removeItem('gs_scheduled_room_id');
+    setImage(null);
+    setResult(null);
+    setActiveCaseId(null);
+    setSelectedDoctorId(null);
+  };
 
   useEffect(() => {
     let interval: number;
@@ -74,12 +111,9 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
     if (file) {
       const reader = new FileReader();
       reader.onloadend = () => { 
+        clearSavedProgress();
         setImage(reader.result as string); 
-        setResult(null); 
         setError(null);
-        setActiveCaseId(null); 
-        setCaseStatus(null); 
-        setSelectedDoctorId(null);
       };
       reader.readAsDataURL(file);
     }
@@ -126,7 +160,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
                 <p className="text-[9px] font-bold text-vitality uppercase tracking-widest">AUTHORIZED CLINICAL BRIDGE</p>
              </div>
           </div>
-          <button onClick={() => window.location.reload()} className="px-6 py-2 bg-rose-600 text-white rounded-full text-[10px] font-bold uppercase tracking-widest">End Session</button>
+          <button onClick={() => { clearSavedProgress(); window.location.reload(); }} className="px-6 py-2 bg-rose-600 text-white rounded-full text-[10px] font-bold uppercase tracking-widest">End Session</button>
         </header>
         <div className="flex-1 bg-zinc-950">
           <iframe src={generateConsultationRoom(activeCaseId || '')} allow="camera; microphone; fullscreen; display-capture" className="w-full h-full border-none" title="Video Consult" />
@@ -209,15 +243,43 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
           <img src={image || ''} alt="Analyzed" className="w-full h-full object-cover opacity-60" />
           <div className="absolute inset-0 bg-gradient-to-t from-charcoal via-charcoal/30 to-transparent"></div>
           <div className="absolute bottom-10 left-10 right-10">
-            <div className="flex items-center gap-3 mb-4">
-               <Layers className="w-6 h-6 text-vitality" />
-               <h2 className="text-4xl font-black text-white tracking-tighter uppercase italic">Analysis Complete</h2>
-            </div>
-            <div className="flex items-center gap-4">
-                <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
-                    <div className="h-full bg-vitality" style={{ width: `${result.confidence_score}%` }}></div>
+            <div className="flex items-center gap-6">
+                <div className="relative w-24 h-24 shrink-0">
+                    <svg className="w-full h-full" viewBox="0 0 100 100">
+                        <circle className="text-white/10" strokeWidth="8" stroke="currentColor" fill="transparent" r="42" cx="50" cy="50" />
+                        <circle 
+                            className="text-vitality transition-all duration-1000 ease-out" 
+                            strokeWidth="8" 
+                            strokeDasharray={264} 
+                            strokeDashoffset={264 - (264 * result.confidence_score) / 100} 
+                            strokeLinecap="round" 
+                            stroke="currentColor" 
+                            fill="transparent" 
+                            r="42" 
+                            cx="50" 
+                            cy="50" 
+                        />
+                    </svg>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center">
+                        <span className="text-xl font-black text-white leading-none">{result.confidence_score}%</span>
+                        <span className="text-[6px] font-black text-vitality uppercase tracking-widest mt-1">Confidence</span>
+                    </div>
                 </div>
-                <span className="text-[10px] text-vitality font-black uppercase tracking-[0.4em]">{result.confidence_score}% Accuracy Score</span>
+                <div className="flex-1">
+                    <div className="flex items-center gap-3 mb-2">
+                       <Layers className="w-5 h-5 text-vitality" />
+                       <h2 className="text-3xl font-black text-white tracking-tighter uppercase italic">Analysis Complete</h2>
+                       <button 
+                         onClick={handleAnalyze} 
+                         disabled={analyzing}
+                         className="ml-auto px-4 py-2 bg-white/10 hover:bg-white/20 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-2 transition-all border border-white/10"
+                       >
+                         {analyzing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                         Re-analyze
+                       </button>
+                    </div>
+                    <p className="text-[9px] text-zinc-400 font-bold uppercase tracking-[0.3em]">Neural imaging synchronized with clinical registry.</p>
+                </div>
             </div>
           </div>
         </div>
@@ -245,19 +307,21 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
               </div>
             </div>
 
-            {/* PATIENT SUMMARY LAYER */}
-            <div className="bg-white rounded-[2.5rem] p-10 shadow-xl border border-slate-100">
-              <div className="flex items-center gap-3 mb-8">
+            {/* PATIENT SUMMARY LAYER: UNDERSTANDING YOUR SKIN */}
+            <div className="bg-white rounded-[2.5rem] p-10 shadow-xl border border-slate-100 overflow-hidden relative">
+              <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-500/5 rounded-full -mr-16 -mt-16" />
+              
+              <div className="flex items-center gap-3 mb-8 relative z-10">
                 <div className="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-500">
                   <MessageCircleHeart className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400 mb-1">Patient Summary</h3>
-                  <p className="text-xs font-bold text-slate-900 uppercase tracking-tight">Understanding Your Skin</p>
+                  <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400 mb-1">Patient Education</h3>
+                  <p className="text-lg font-black text-slate-900 uppercase italic tracking-tight">Understanding Your Skin</p>
                 </div>
               </div>
               
-              <div className="space-y-8">
+              <div className="space-y-8 relative z-10">
                  <div className="p-6 bg-indigo-50/50 border border-indigo-100 rounded-3xl">
                     <h4 className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-2">What It Is</h4>
                     <p className="text-sm font-medium text-slate-700 leading-relaxed">
@@ -272,21 +336,31 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
                     </p>
                  </div>
 
-                 <div>
-                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Immediate Advice</h4>
-                    <div className="grid gap-3">
-                        {result.patient_advice && result.patient_advice.length > 0 ? (
-                            result.patient_advice.map((tip, idx) => (
-                                <div key={idx} className="flex items-center gap-3 p-4 bg-white border border-slate-100 rounded-2xl shadow-sm">
-                                    <div className="w-6 h-6 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[10px] font-black shrink-0">
-                                        {idx + 1}
-                                    </div>
-                                    <p className="text-xs font-bold text-slate-700 uppercase">{tip}</p>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                        <h4 className="text-[10px] font-black text-emerald-500 uppercase tracking-widest mb-2 flex items-center gap-2">
+                           <CheckCircle2 className="w-3 h-3" /> Clinical Do's
+                        </h4>
+                        <div className="space-y-2">
+                            {result.patient_advice && result.patient_advice.slice(0, 2).map((tip, idx) => (
+                                <div key={idx} className="flex items-start gap-3 p-4 bg-emerald-50/50 border border-emerald-100 rounded-2xl">
+                                    <p className="text-[10px] font-bold text-emerald-700 uppercase leading-tight">{tip}</p>
                                 </div>
-                            ))
-                        ) : (
-                            <div className="p-4 bg-white border border-slate-100 rounded-2xl text-xs text-slate-400">Consult specialist for personalized advice.</div>
-                        )}
+                            ))}
+                        </div>
+                    </div>
+                    <div className="space-y-4">
+                        <h4 className="text-[10px] font-black text-rose-500 uppercase tracking-widest mb-2 flex items-center gap-2">
+                           <AlertCircle className="w-3 h-3" /> Clinical Don'ts
+                        </h4>
+                        <div className="space-y-2">
+                            <div className="flex items-start gap-3 p-4 bg-rose-50/50 border border-rose-100 rounded-2xl">
+                                <p className="text-[10px] font-bold text-rose-700 uppercase leading-tight">Do not attempt self-medication without specialist review.</p>
+                            </div>
+                            <div className="flex items-start gap-3 p-4 bg-rose-50/50 border border-rose-100 rounded-2xl">
+                                <p className="text-[10px] font-bold text-rose-700 uppercase leading-tight">Avoid excessive sun exposure until consultation.</p>
+                            </div>
+                        </div>
                     </div>
                  </div>
               </div>
@@ -304,17 +378,41 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
             
             {/* SPECIALIST CHOICE SECTION */}
             <div className="bg-white rounded-[2.5rem] p-10 shadow-xl border border-slate-100">
-                <div className="flex items-center gap-3 mb-8">
-                  <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center text-white">
-                    <ShieldCheck className="w-5 h-5" />
+                <div className="flex items-center justify-between mb-8">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-slate-900 flex items-center justify-center text-white">
+                      <ShieldCheck className="w-5 h-5" />
+                    </div>
+                    <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Authorized Specialist Hub</h3>
                   </div>
-                  <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-slate-400">Authorized Specialist Hub</h3>
+                  <div className="flex flex-col items-end gap-2 shrink-0">
+                    <span className="text-[7px] font-black text-slate-400 uppercase tracking-widest mr-2">Optimization Protocol</span>
+                    <div className="flex items-center gap-2 bg-slate-50 p-1.5 rounded-2xl border border-slate-100">
+                        <div className="p-2 text-slate-400">
+                            <Filter className="w-3.5 h-3.5" />
+                        </div>
+                        {(['rating', 'price', 'availability'] as const).map((criteria) => (
+                            <button
+                            key={criteria}
+                            onClick={() => setSortCriteria(criteria)}
+                            className={`px-4 py-1.5 rounded-xl text-[8px] font-black uppercase tracking-widest transition-all ${sortCriteria === criteria ? 'bg-white text-charcoal shadow-sm border border-slate-100' : 'text-slate-400 hover:text-charcoal'}`}
+                            >
+                            {criteria}
+                            </button>
+                        ))}
+                    </div>
+                  </div>
                 </div>
                 
                 <div className="space-y-4">
                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 px-2">Choose an online specialist to establish signal:</p>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {MOCK_DOCTORS.map((doc) => (
+                        {[...MOCK_DOCTORS].sort((a, b) => {
+                            if (sortCriteria === 'rating') return b.rating - a.rating;
+                            if (sortCriteria === 'price') return a.price - b.price;
+                            if (sortCriteria === 'availability') return (a.available === b.available) ? 0 : a.available ? -1 : 1;
+                            return 0;
+                        }).map((doc) => (
                             <button 
                                 key={doc.id}
                                 onClick={() => setSelectedDoctorId(doc.id)}
@@ -327,6 +425,13 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
                                     <div className="flex items-center gap-1">
                                         <Star className="w-2.5 h-2.5 text-amber-400 fill-amber-400" />
                                         <span className="text-[9px] font-black text-slate-400">{doc.rating}</span>
+                                    </div>
+                                    <div className="flex items-center gap-3 mt-1">
+                                        <span className="text-[10px] font-black text-charcoal tracking-tighter">GHS {doc.price}</span>
+                                        <div className="flex items-center gap-1">
+                                            <div className={`w-1.5 h-1.5 rounded-full ${doc.available ? 'bg-vitality animate-pulse' : 'bg-slate-300'}`} />
+                                            <span className="text-[8px] font-bold text-slate-400 uppercase tracking-widest">{doc.available ? 'Online' : 'Away'}</span>
+                                        </div>
                                     </div>
                                 </div>
                                 <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center transition-all ${selectedDoctorId === doc.id ? 'border-vitality bg-vitality text-white' : 'border-slate-200 bg-white'}`}>
@@ -353,15 +458,47 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
                          <p className="text-3xl font-black text-white tracking-tighter italic">GHS {selectedDoctor.price}</p>
                      </div>
                  )}
-                 <button 
-                    onClick={() => {
-                      if (selectedDoctor) triggerConsult(selectedDoctor);
-                    }} 
-                    disabled={isSyncing || !selectedDoctorId} 
-                    className={`px-14 py-8 rounded-full font-black text-[11px] uppercase tracking-[0.5em] transition-all flex items-center justify-center gap-4 shadow-xl active:scale-95 ${isSyncing || !selectedDoctorId ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-vitality text-white shadow-vitality/30 hover:bg-emerald-400'}`}
-                  >
-                      {isSyncing ? <Loader2 className="w-5 h-5 animate-spin" /> : <>Connect Now <ArrowRight className="w-5 h-5" /></>}
-                  </button>
+                  <div className="flex flex-col gap-4">
+                    <button 
+                      onClick={() => {
+                        if (selectedDoctor) triggerConsult(selectedDoctor);
+                      }} 
+                      disabled={isSyncing || !selectedDoctorId} 
+                      className={`px-14 py-8 rounded-full font-black text-[11px] uppercase tracking-[0.5em] transition-all flex items-center justify-center gap-4 shadow-xl active:scale-95 ${isSyncing || !selectedDoctorId ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-vitality text-white shadow-vitality/30 hover:bg-emerald-400'} ${isSyncing ? 'animate-pulse' : ''}`}
+                    >
+                        {isSyncing ? (
+                          <>
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                            <span>Establishing Link...</span>
+                          </>
+                        ) : (
+                          <>
+                            Connect Now 
+                            <ArrowRight className="w-5 h-5" />
+                          </>
+                        )}
+                    </button>
+                    
+                    <button 
+                      onClick={() => {
+                        let roomId = activeCaseId;
+                        if (!roomId) {
+                          const savedScheduled = localStorage.getItem('gs_scheduled_room_id');
+                          if (savedScheduled) {
+                            roomId = savedScheduled;
+                          } else {
+                            roomId = `scheduled_${Math.random().toString(36).substring(7)}`;
+                            localStorage.setItem('gs_scheduled_room_id', roomId);
+                          }
+                        }
+                        window.open(generateConsultationRoom(roomId), '_blank');
+                      }}
+                      className="px-14 py-6 rounded-full border-2 border-white/10 hover:bg-white/5 text-white font-black text-[11px] uppercase tracking-[0.5em] transition-all flex items-center justify-center gap-4 active:scale-95"
+                    >
+                      <Calendar className="w-5 h-5" />
+                      Schedule Video Call
+                    </button>
+                  </div>
               </div>
             </div>
           </div>
@@ -383,7 +520,7 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
         {image ? (
           <div className="w-full max-w-lg relative rounded-[4rem] overflow-hidden shadow-2xl mb-12 border-4 border-white">
             <img src={image} className="w-full h-[32rem] object-cover" />
-            {!analyzing && <button onClick={() => { setImage(null); setError(null); }} className="absolute top-10 right-10 p-5 bg-charcoal/40 backdrop-blur-md text-white rounded-3xl"><X className="w-8 h-8" /></button>}
+            {!analyzing && <button onClick={() => { clearSavedProgress(); setError(null); }} className="absolute top-10 right-10 p-5 bg-charcoal/40 backdrop-blur-md text-white rounded-3xl"><X className="w-8 h-8" /></button>}
             {analyzing && (
               <div className="absolute inset-0 bg-charcoal/80 backdrop-blur-sm flex flex-col items-center justify-center p-10 text-center space-y-8">
                  <div className="scanning-line" />
@@ -417,9 +554,20 @@ const ScanView: React.FC<ScanViewProps> = ({ onScanComplete, onConsult, onBack }
         {error && (
           <div className="w-full max-w-lg mb-8 p-8 bg-rose-50 border border-rose-100 rounded-[2.5rem] flex items-start gap-5 animate-in slide-in-from-top-4 shadow-sm">
             <AlertTriangle className="w-8 h-8 text-rose-500 shrink-0 mt-0.5" />
-            <div>
+            <div className="flex-1">
               <p className="text-rose-900 font-black text-[10px] uppercase tracking-widest mb-2">Diagnostic Alert</p>
-              <p className="text-rose-700/80 text-[11px] font-bold leading-relaxed uppercase tracking-tight">{error}</p>
+              <p className="text-rose-700/80 text-[11px] font-bold leading-relaxed uppercase tracking-tight mb-3">{error}</p>
+              
+              <div className="pt-3 border-t border-rose-200/50">
+                <div className="flex items-center gap-2 text-rose-600">
+                  <Info className="w-3 h-3" />
+                  <p className="text-[9px] font-black uppercase tracking-widest">
+                    {error.toLowerCase().includes('quality') || error.toLowerCase().includes('retake') 
+                      ? "Action: Retake photo in bright, natural light."
+                      : "Action: System busy. Please try again in a few moments."}
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         )}
